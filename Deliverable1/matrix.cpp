@@ -1,8 +1,10 @@
 #include <algorithm>
 #include <functional>
 #include <iostream>
+#include <map>
 #include <string>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include "matrix.hpp"
@@ -37,29 +39,32 @@ std::string to_lowercase(std::string str) {
     return lower_str;
 }
 
-/// @brief Convert a matrix in a 2D array format to a Compressed Sparse Row representation.
+/// @brief Convert a matrix stored as a map of coordinates and associated values to a Compressed Sparse Row representation.
 /// @tparam T the type of the values in the matrix
 /// @param matrix the matrix to convert
 /// @return a CSR representation of `matrix`
-template<typename T> csr_matrix<T> array_to_csr_matrix(std::vector<std::vector<T>> matrix) {
+template<typename T> csr_matrix<T> map_to_csr_matrix(std::map<std::pair<long, long>, T> matrix) {
     
     csr_matrix<T> sparse_matrix;
     sparse_matrix.row_indices.push_back(0);
 
-    size_t rows = matrix.size();
-    size_t columns = matrix[0].size();
-    for(size_t row = 0; row < rows; row++) {
-        for(size_t col = 0; col < columns; col++) {
+    long latest_row = 0;
+    long values_read = 0;
+    for(std::pair<std::pair<long, long>, T> kv : matrix) {
+        long row = kv.first.first;
+        long column = kv.first.second;
 
-            T value = matrix[row][col];
-            if(value != 0) {
-                sparse_matrix.values.push_back(value);
-                sparse_matrix.column_indices.push_back(col);
-            }
+        if(latest_row != row) {
+            latest_row = row;
+            sparse_matrix.row_indices.push_back(values_read);
         }
-        sparse_matrix.row_indices.push_back(sparse_matrix.values.size());
+
+        sparse_matrix.values.push_back(kv.second);
+        sparse_matrix.column_indices.push_back(column);
+        values_read++;
     }
-    
+
+    sparse_matrix.row_indices.push_back(values_read);    
     return sparse_matrix;
 }
 
@@ -91,10 +96,7 @@ template<typename T> csr_matrix<T> read_coordinate_matrix(std::istream& mtx_file
         break;
     }
 
-    std::vector<std::vector<T>> array_matrix(rows);
-    for(std::vector<T> &row : array_matrix) {
-        row = std::vector<T>(columns);
-    }
+    std::map<std::pair<long, long>, T> map_matrix;
 
     // read and store values in a 2D array matrix
     long n_nonzeroes = 0;
@@ -116,12 +118,12 @@ template<typename T> csr_matrix<T> read_coordinate_matrix(std::istream& mtx_file
             throw std::out_of_range("Value's coordinates are outside the dimensions defined in the size line");
         }
 
-        array_matrix[row][column] = value;
+        map_matrix[std::make_pair(row, column)] = value;
         if(row != column && symmetry == symmetry_type::symmetric) {
-            array_matrix[column][row] = value;
+            map_matrix[std::make_pair(column, row)] = value;
         }
         if(row != column && symmetry == symmetry_type::skew_symmetric) {
-            array_matrix[column][row] = -value;
+            map_matrix[std::make_pair(column, row)] = -value;
         }
     }
 
@@ -129,7 +131,10 @@ template<typename T> csr_matrix<T> read_coordinate_matrix(std::istream& mtx_file
         throw std::invalid_argument("Number of nonzero values in size line and actual given values are not equal");
     }
 
-    return array_to_csr_matrix(array_matrix);
+    csr_matrix<T> sparse_matrix = map_to_csr_matrix(map_matrix);
+    sparse_matrix.n_rows = rows;
+    sparse_matrix.n_columns = columns;
+    return sparse_matrix;
 }
 
 /*********************/
