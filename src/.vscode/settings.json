@@ -44,7 +44,12 @@
         "ostream": "cpp",
         "stdexcept": "cpp",
         "streambuf": "cpp",
-        "typeinfo": "cpp"
+        "typeinfo": "cpp",
+        "chrono": "cpp",
+        "ctime": "cpp",
+        "ratio": "cpp",
+        "sstream": "cpp",
+        "map": "cpp"
     },
     "C_Cpp.default.cppStandard": "",
     "C_Cpp.default.cStandard": ""
