@@ -132,8 +132,10 @@ template<typename T> csr_matrix<T> read_coordinate_matrix(std::istream& mtx_file
     }
 
     csr_matrix<T> sparse_matrix = map_to_csr_matrix(map_matrix);
+    size_t total_elements = (columns * rows);
     sparse_matrix.n_rows = rows;
     sparse_matrix.n_columns = columns;
+    sparse_matrix.sparsity = (total_elements - sparse_matrix.values.size()) / ((double) total_elements) * 100;
     return sparse_matrix;
 }
 

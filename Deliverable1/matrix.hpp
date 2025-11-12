@@ -24,6 +24,7 @@ struct matrix_metadata {
 template<typename T> struct csr_matrix {
     size_t n_rows;
     size_t n_columns;
+    double sparsity;
     std::vector<long> column_indices;
     std::vector<long> row_indices;
     std::vector<T> values;

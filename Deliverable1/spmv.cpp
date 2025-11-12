@@ -1,3 +1,4 @@
+#include <iomanip>
 #include <iostream>
 #include <fstream>
 #include <omp.h>
@@ -70,7 +71,7 @@ template<typename T> std::vector<T> matrix_vector_multiplication_parallel(csr_ma
     
     std::vector<T> result(array.size());
 
-    #pragma omp parallel for
+    #pragma omp parallel for default(none) shared(result, matrix, array)
     for(size_t i = 0; i < array.size(); i++) {
         long row_start = matrix.row_indices[i];
         long row_end = matrix.row_indices[i + 1];
@@ -102,6 +103,7 @@ int main(int argc, char* argv[]) {
 
             std::cout << "Loading matrix...\n";
             csr_matrix<long> m = read_integer_matrix(file, metadata);
+            std::cout << "Matrix sparsity: " << std::setprecision(10) << m.sparsity << "%\n";
 
             std::cout << "Generating vector...\n";
             std::vector<long> test_arr = generate_integer_array(m.n_rows);
@@ -138,6 +140,7 @@ int main(int argc, char* argv[]) {
             
             std::cout << "Loading matrix...\n";
             csr_matrix<double> m = read_real_matrix(file, metadata);
+            std::cout << "Matrix sparsity: " << std::setprecision(10) << m.sparsity << "%\n";
 
             std::cout << "Generating vector...\n";
             std::vector<double> test_arr = generate_real_array(m.n_rows);
