@@ -12,11 +12,11 @@ benchmark_results benchmark(std::function<void ()> f, int runs) {
     benchmark_results results;
 
     for(int i = 0; i < runs; i++) {
-        std::chrono::time_point start = std::chrono::high_resolution_clock::now();
+        auto start = std::chrono::high_resolution_clock::now();
 
         f();
 
-        std::chrono::time_point end = std::chrono::high_resolution_clock::now();
+        auto end = std::chrono::high_resolution_clock::now();
         long duration_millis = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
         results.times.push_back(duration_millis);
     }
