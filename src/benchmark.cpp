@@ -7,15 +7,17 @@
 
 #include "benchmark.hpp"
 
-benchmark_results benchmark(std::function<void ()> f, int runs) {
+benchmark_results benchmark(std::function<void ()> f, int runs, int warmup_runs) {
 
     benchmark_results results;
 
+    for(int i = 0; i < warmup_runs; i++) {
+        f();
+    }
+
     for(int i = 0; i < runs; i++) {
         auto start = std::chrono::high_resolution_clock::now();
-
         f();
-
         auto end = std::chrono::high_resolution_clock::now();
         long duration_millis = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
         results.times.push_back(duration_millis);

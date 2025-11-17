@@ -1,7 +1,7 @@
 #include <iomanip>
 #include <iostream>
 #include <fstream>
-#include <omp.h>
+#include <memory>
 #include <random>
 #include <string>
 #include <stdexcept>
@@ -47,19 +47,21 @@ std::vector<double> generate_real_array(size_t size) {
 /// @param matrix the matrix to multiply
 /// @param array the vector to multiply
 /// @return the result of the multiplication
-template<typename T> std::vector<T> matrix_vector_multiplication(csr_matrix<T>& matrix, std::vector<T>& array) {
+template<typename T> std::unique_ptr<T[]> matrix_vector_multiplication(csr_matrix<T>& matrix, std::vector<T>& array) {
     
-    std::vector<T> result(array.size());
+    alignas(64) T* result = new T[array.size()];
 
     for(size_t i = 0; i < array.size(); i++) {
         long row_start = matrix.row_indices[i];
         long row_end = matrix.row_indices[i + 1];
+        long accumulator = 0;
         for(long value_index = row_start; value_index < row_end; value_index++) {
-            result[i] += (matrix.values[value_index] * array[i]);
+            accumulator += (matrix.values[value_index] * array[i]);
         }
+        result[i] = accumulator;
     }
 
-    return result;
+    return std::unique_ptr<T[]>(result);
 }
 
 /// @brief Perform a matrix-vector multiplication
@@ -67,20 +69,22 @@ template<typename T> std::vector<T> matrix_vector_multiplication(csr_matrix<T>& 
 /// @param matrix the matrix to multiply
 /// @param array the vector to multiply
 /// @return the result of the multiplication
-template<typename T> std::vector<T> matrix_vector_multiplication_parallel(csr_matrix<T>& matrix, std::vector<T>& array) {
+template<typename T> std::unique_ptr<T[]> matrix_vector_multiplication_parallel(csr_matrix<T>& matrix, std::vector<T>& array) {
     
-    std::vector<T> result(array.size());
+    alignas(64) T* result = new T[array.size()];
 
     #pragma omp parallel for default(none) shared(result, matrix, array)
     for(size_t i = 0; i < array.size(); i++) {
         long row_start = matrix.row_indices[i];
         long row_end = matrix.row_indices[i + 1];
+        long accumulator = 0;
         for(long value_index = row_start; value_index < row_end; value_index++) {
-            result[i] += (matrix.values[value_index] * array[i]);
+            accumulator += (matrix.values[value_index] * array[i]);
         }
+        result[i] = accumulator;
     }
 
-    return result;
+    return std::unique_ptr<T[]>(result);
 }
 
 int main(int argc, char* argv[]) {
@@ -109,8 +113,8 @@ int main(int argc, char* argv[]) {
             std::vector<long> test_arr = generate_integer_array(m.n_rows);
 
             std::cout << "Starting sequential benchmark...\n";
-            benchmark_results results = benchmark([&m, &test_arr]() { matrix_vector_multiplication(m, test_arr); }, 10);
-            std::cout << "\nRESULTS:\n";
+            benchmark_results results = benchmark([&m, &test_arr]() { matrix_vector_multiplication(m, test_arr); }, 10, 1);
+            std::cout << "RESULTS:\n";
             std::cout << "Fastest: " << results.fastest_time << "ms\n";
             std::cout << "Slowest: " << results.slowest_time << "ms\n";
             std::cout << "Average: " << results.average_time << "ms\n";
@@ -119,11 +123,11 @@ int main(int argc, char* argv[]) {
             for(long v : results.times) {
                 std::cout << v << "ms, ";
             }
-            std::cout << "\n\n";
+            std::cout << "\n";
 
             std::cout << "Starting parallel benchmark...\n";
-            benchmark_results results2 = benchmark([&m, &test_arr]() { matrix_vector_multiplication_parallel(m, test_arr); }, 10);
-            std::cout << "\nRESULTS:\n";
+            benchmark_results results2 = benchmark([&m, &test_arr]() { matrix_vector_multiplication_parallel(m, test_arr); }, 10, 1);
+            std::cout << "RESULTS:\n";
             std::cout << "Fastest: " << results2.fastest_time << "ms\n";
             std::cout << "Slowest: " << results2.slowest_time << "ms\n";
             std::cout << "Average: " << results2.average_time << "ms\n";
@@ -133,6 +137,9 @@ int main(int argc, char* argv[]) {
                 std::cout << v << "ms, ";
             }
             std::cout << "\n";
+
+            double speedup = (results.ninetieth_percentile_time - results2.ninetieth_percentile_time) / ((double) results.ninetieth_percentile_time) * 100;
+            std::cout << "Speedup of parallel compared to sequential: " << speedup << "%\n";
 
             break;
         }
@@ -146,7 +153,7 @@ int main(int argc, char* argv[]) {
             std::vector<double> test_arr = generate_real_array(m.n_rows);
 
             std::cout << "Starting sequential benchmark...\n";
-            benchmark_results results = benchmark([&m, &test_arr]() { matrix_vector_multiplication(m, test_arr); }, 10);
+            benchmark_results results = benchmark([&m, &test_arr]() { matrix_vector_multiplication(m, test_arr); }, 10, 5);
             std::cout << "\nRESULTS:\n";
             std::cout << "Fastest: " << results.fastest_time << "ms\n";
             std::cout << "Slowest: " << results.slowest_time << "ms\n";
@@ -156,10 +163,10 @@ int main(int argc, char* argv[]) {
             for(long v : results.times) {
                 std::cout << v << "ms, ";
             }
-            std::cout << "\n\n";
+            std::cout << "\n";
 
             std::cout << "Starting parallel benchmark...\n";
-            benchmark_results results2 = benchmark([&m, &test_arr]() { matrix_vector_multiplication_parallel(m, test_arr); }, 10);
+            benchmark_results results2 = benchmark([&m, &test_arr]() { matrix_vector_multiplication_parallel(m, test_arr); }, 10, 5);
             std::cout << "\nRESULTS:\n";
             std::cout << "Fastest: " << results2.fastest_time << "ms\n";
             std::cout << "Slowest: " << results2.slowest_time << "ms\n";
@@ -170,6 +177,9 @@ int main(int argc, char* argv[]) {
                 std::cout << v << "ms, ";
             }
             std::cout << "\n";
+
+            double speedup = (results.ninetieth_percentile_time - results2.ninetieth_percentile_time) / ((double) results.ninetieth_percentile_time) * 100;
+            std::cout << "Speedup of parallel compared to sequential: " << speedup << "%\n";
 
             break;
         }
