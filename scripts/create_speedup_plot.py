@@ -2,6 +2,7 @@ from argparse import ArgumentParser
 import csv
 import itertools
 import matplotlib.pyplot as plt
+import numpy as np
 import os
 import re
 import sys
@@ -20,6 +21,8 @@ parser = ArgumentParser("create_speedup_plot")
 parser.add_argument("results_path", help="Path to the directory containg the result files")
 parser.add_argument("output_path", help="Path to where the generated plot will be saved as an image")
 args = parser.parse_args()
+
+fig, ax = plt.subplots(1, 1, layout="constrained", figsize=[8.4, 4.8])
 
 csv_files: list[str] = [file for file in os.listdir(args.results_path) if file.endswith(".csv")]
 for matrix_name, matrix_iter in itertools.groupby(csv_files, get_matrix_name):
@@ -44,17 +47,17 @@ for matrix_name, matrix_iter in itertools.groupby(csv_files, get_matrix_name):
     sorted_times = sorted(execution_times.items(), key=lambda kv: kv[0])
     x_values = [kv[0] for kv in sorted_times]
     y_values = [kv[1] for kv in sorted_times]
-    plt.plot(x_values, y_values, label=matrix_name)
+    ax.plot(x_values, y_values, "o-", label=matrix_name)
 
-plt.xlim(0, plt.xlim()[1])
-plt.ylim(0, max(plt.ylim()[1], 115))
-#plt.xticks(np.arange(0, 65, 8))
+ax.set_xlim(0, plt.xlim()[1])
+ax.set_ylim(0, max(plt.ylim()[1], 115))
+ax.set_xticks(np.arange(0, 33, 4))
 
-#plt.plot([1, plt.xlim()[1]], [100, 100], label="Sequential baseline")
+ax.plot([1, 32], [100, 100], label="Sequential baseline")
 
-plt.title("Execution time by increasing the number of cores")
-plt.xlabel("Number of cores")
-plt.ylabel("Execution time [%]")
-plt.grid(True)
-plt.figlegend() 
-plt.savefig(args.output_path)
+ax.set_title("Execution time by increasing the number of cores")
+ax.set_xlabel("Number of cores")
+ax.set_ylabel("Execution time [%]")
+ax.grid(True)
+fig.legend(loc="outside right upper") 
+fig.savefig(args.output_path)
