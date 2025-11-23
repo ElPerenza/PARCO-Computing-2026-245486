@@ -1,0 +1,72 @@
+#!/bin/bash
+
+#PBS -N benchmark_all
+#PBS -q short_cpuQ
+#PBS -l walltime=1:00:00
+#PBS -l ncpus=32
+#PBS -l mem=64gb
+
+benchmark_single() {
+
+    echo ""
+    echo $1
+    echo ""
+    echo "--------------------------"
+    echo "--------sequential--------"
+    echo "--------------------------"
+    ./spmv sequential "./matrices/${1}.mtx" "./results/${1}_sequential.csv"
+
+    OMP_NUM_THREADS=4
+    echo ""
+    echo "--------------------------"
+    echo "--------4 threads---------"
+    echo "--------------------------"
+    ./spmv parallel "./matrices/${1}.mtx" "./results/${1}_4threads.csv"
+
+    OMP_NUM_THREADS=8
+    echo ""
+    echo "--------------------------"
+    echo "--------8 threads---------"
+    echo "--------------------------"
+    ./spmv parallel "./matrices/${1}.mtx" "./results/${1}_8threads.csv"
+
+    OMP_NUM_THREADS=16
+    echo ""
+    echo "--------------------------"
+    echo "--------16 threads--------"
+    echo "--------------------------"
+    ./spmv parallel "./matrices/${1}.mtx" "./results/${1}_16threads.csv"
+
+    OMP_NUM_THREADS=24
+    echo ""
+    echo "--------------------------"
+    echo "--------24 threads--------"
+    echo "--------------------------"
+    ./spmv parallel "./matrices/${1}.mtx" "./results/${1}_24threads.csv"
+
+    OMP_NUM_THREADS=32
+    echo ""
+    echo "--------------------------"
+    echo "--------32 threads--------"
+    echo "--------------------------"
+    ./spmv parallel "./matrices/${1}.mtx" "./results/${1}_32threads.csv"
+}
+
+module load gcc91
+g++() {
+    g++-9.1.0 "$@"
+}
+g++ --version
+
+hostname
+lscpu
+
+cd "$PBS_O_WORKDIR" # go to the directory where qsub was run
+g++ -fopenmp -O3 -march=native -mtune=native -o ./spmv ./src/spmv.cpp ./src/matrix.cpp ./src/benchmark.cpp
+
+benchmark_single "mouse_gene"
+benchmark_single "vas_stokes_2M"
+benchmark_single "circuit5M"
+benchmark_single "kron_g500-logn17"
+benchmark_single "mawi_201512020000"
+benchmark_single "kron_g500-logn20"

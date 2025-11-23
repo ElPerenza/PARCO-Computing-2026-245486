@@ -5,11 +5,11 @@
 #include <vector>
 
 struct benchmark_results {
-    long average_time;
-    long fastest_time;
-    long slowest_time;
-    long ninetieth_percentile_time;
-    std::vector<long> times;
+    double average_time;
+    double fastest_time;
+    double slowest_time;
+    double ninetieth_percentile_time;
+    std::vector<double> times;
 };
 
 /// @brief Execute the given function a number of times equal to `runs` and report the execution times.
