@@ -77,7 +77,7 @@ template<typename T> std::unique_ptr<T[]> matrix_vector_multiplication_parallel(
     
     alignas(CACHE_LINE_SIZE) T* result = new T[array.size()];
 
-    #pragma omp parallel for default(none) shared(result, matrix, array)
+    #pragma omp parallel for default(none) shared(result, matrix, array) schedule(static)
     for(size_t i = 0; i < array.size(); i++) {
         long row_start = matrix.row_indices[i];
         long row_end = matrix.row_indices[i + 1];
