@@ -1,5 +1,6 @@
 # Parallel Computing Course - Deliverable 1
-This repository contains the code developed for the scientific paper of the first deliverable of the Parallel Computing course.
+This repository contains the code developed for the scientific paper of the first deliverable of the Parallel Computing course.  
+Note: the working directory (`./`) mentioned in this README refers to the `deliverable_1` folder, not the repository root. 
 
 ## Getting the matrices
 Since the files are too large to upload on GitHub, the matrices used for benchmarks must be downloaded separately. The downloaded `.mtx` files should be placed in the `./matrices` folder (needs to be created). The matrices are:
