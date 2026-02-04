@@ -69,6 +69,25 @@ template<typename T> std::unique_ptr<T[]> matrix_vector_multiplication(const csr
     return std::unique_ptr<T[]>(result);
 }
 
+template<typename T> void send_vector_mpi(const std::vector<T>& vec, MPI_Datatype datatype, int destination, int tag, MPI_Comm communicator) {
+    // Send vector size
+    //TODO: I don't like sending size_t values and just saying they're unsigned longs, even if it's technically the same on x64 GCC
+    size_t vector_size = vec.size();
+    MPI_Send(&vector_size, 1, MPI_UNSIGNED_LONG, destination, tag, communicator);
+    // Send vector contents
+    MPI_Send(vec.data(), vector_size, datatype, destination, tag, communicator);
+}
+
+template<typename T> std::vector<T> receive_vector_mpi(MPI_Datatype datatype, int source, int tag, MPI_Comm communicator) {
+    // Receive vector size
+    size_t vector_size;
+    MPI_Recv(&vector_size, 1, MPI_UNSIGNED_LONG, source, tag, communicator, MPI_STATUS_IGNORE);
+    // Receive vector contents
+    std::unique_ptr<T[]> c_array(new T[vector_size]);
+    MPI_Recv(c_array.get(), vector_size, datatype, source, tag, communicator, MPI_STATUS_IGNORE);
+    return std::vector<T>(c_array.get(), c_array.get() + vector_size);
+}
+
 void extract_process_partition(const csr_matrix<long>& old_matrix, const std::vector<long>& old_array, int process_rank, int n_processes, csr_matrix<long>& new_matrix, std::vector<long>& new_array) {
 
     new_matrix.values.push_back(0);
@@ -89,7 +108,7 @@ void extract_process_partition(const csr_matrix<long>& old_matrix, const std::ve
     }
 }
 
-void distribute_data_to_processes(const csr_matrix<long>& matrix, const std::vector<long>& array, const MPI_Comm& communicator) {
+void distribute_data_to_processes(const csr_matrix<long>& matrix, const std::vector<long>& array, MPI_Comm communicator) {
 
     int my_rank;
     MPI_Comm_rank(communicator, &my_rank);
@@ -106,19 +125,9 @@ void distribute_data_to_processes(const csr_matrix<long>& matrix, const std::vec
         csr_matrix<long> partial_matrix;
         extract_process_partition(matrix, array, my_rank, n_processes, partial_matrix, partial_array);
 
-        //TODO: I don't like sending size_t values and just saying they're unsigned longs, even if it's technically the same on x64 GCC
-        // Send row index array of the CSR matrix
-        size_t row_indices_size = partial_matrix.row_indices.size();
-        MPI_Send(&row_indices_size, 1, MPI_UNSIGNED_LONG, process_rank, 0, communicator);
-        MPI_Send(partial_matrix.row_indices.data(), row_indices_size, MPI_LONG, process_rank, 0, communicator);
-        // Send values array of the CSR matrix
-        size_t values_size = partial_matrix.values.size();
-        MPI_Send(&values_size, 1, MPI_UNSIGNED_LONG, process_rank, 0, communicator);
-        MPI_Send(partial_matrix.values.data(), values_size, MPI_LONG, process_rank, 0, communicator);
-        // Send the dense array
-        size_t array_size = partial_array.size();
-        MPI_Send(&array_size, 1, MPI_UNSIGNED_LONG, process_rank, 0, communicator);
-        MPI_Send(partial_array.data(), array_size, MPI_LONG, process_rank, 0, communicator);
+        send_vector_mpi(partial_matrix.row_indices, MPI_LONG, process_rank, 0, MPI_COMM_WORLD);
+        send_vector_mpi(partial_matrix.values, MPI_LONG, process_rank, 0, MPI_COMM_WORLD);
+        send_vector_mpi(partial_array, MPI_LONG, process_rank, 0, MPI_COMM_WORLD);
     }
 }
 
@@ -232,24 +241,9 @@ int main(int argc, char* argv[]) {
         std::function<void ()> fn = [&rank]() {
 
             csr_matrix<long> matrix;
-
-            size_t row_indices_size;
-            MPI_Recv(&row_indices_size, 1, MPI_UNSIGNED_LONG, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            std::unique_ptr<long[]> row_indices_pointer = std::make_unique<long[]>(row_indices_size);
-            MPI_Recv(row_indices_pointer.get(), row_indices_size, MPI_UNSIGNED_LONG, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            matrix.row_indices = std::vector<long>(row_indices_pointer.get(), row_indices_pointer.get() + row_indices_size);
-
-            size_t values_size;
-            MPI_Recv(&values_size, 1, MPI_UNSIGNED_LONG, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            std::unique_ptr<long[]> a = std::make_unique<long[]>(values_size);
-            MPI_Recv(a.get(), values_size, MPI_UNSIGNED_LONG, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            matrix.values = std::vector<long>(a.get(), a.get() + values_size);
-
-            size_t array_size;
-            MPI_Recv(&array_size, 1, MPI_UNSIGNED_LONG, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            std::unique_ptr<long[]> b = std::make_unique<long[]>(array_size);
-            MPI_Recv(b.get(), array_size, MPI_UNSIGNED_LONG, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            std::vector<long> array = std::vector<long>(b.get(), b.get() + array_size);
+            matrix.row_indices = receive_vector_mpi<long>(MPI_LONG, 0, 0, MPI_COMM_WORLD);
+            matrix.values = receive_vector_mpi<long>(MPI_LONG, 0, 0, MPI_COMM_WORLD);
+            std::vector<long> array = receive_vector_mpi<long>(MPI_LONG, 0, 0, MPI_COMM_WORLD);
 
             matrix_vector_multiplication(matrix, array);
             MPI_Barrier(MPI_COMM_WORLD);
