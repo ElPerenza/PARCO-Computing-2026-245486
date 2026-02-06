@@ -43,7 +43,7 @@ std::string to_lowercase(std::string str) {
 /// @tparam T the type of the values in the matrix
 /// @param matrix the matrix to convert
 /// @return a CSR representation of `matrix`
-template<typename T> csr_matrix<T> map_to_csr_matrix(std::map<std::pair<long, long>, T> matrix) {
+template<typename T> csr_matrix<T> map_to_csr_matrix(const std::map<std::pair<long, long>, T>& matrix) {
     
     csr_matrix<T> sparse_matrix;
     sparse_matrix.row_indices.push_back(0);

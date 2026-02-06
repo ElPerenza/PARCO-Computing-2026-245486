@@ -21,13 +21,16 @@ struct matrix_metadata {
     symmetry_type symmetry;
 };
 
-template<typename T> struct csr_matrix {
+template<typename T> struct partial_csr_matrix {
+    std::vector<long> row_indices;
+    std::vector<T> values;
+};
+
+template<typename T> struct csr_matrix : public partial_csr_matrix<T> {
     size_t n_rows;
     size_t n_columns;
     double sparsity;
     std::vector<long> column_indices;
-    std::vector<long> row_indices;
-    std::vector<T> values;
 };
 
 /// @brief Identify if a Matrix Market file is supported by this program based on its header.
