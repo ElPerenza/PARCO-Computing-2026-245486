@@ -1,0 +1,85 @@
+#!/bin/bash
+
+#PBS -N benchmark_all
+#PBS -q short_cpuQ
+#PBS -l walltime=3:00:00
+#PBS -l select=2:ncpus=64:mem=64gb:mpiprocs=64
+
+benchmark_single() {
+
+    echo ""
+    echo $1
+    echo ""
+    echo "--------------------------"
+    echo "--------sequential--------"
+    echo "--------------------------"
+    mpirun -np 1 ./spmv sequential "./matrices/${1}.mtx" "./results/${1}_sequential.csv"
+
+    echo ""
+    echo "--------------------------"
+    echo "-------8 processes--------"
+    echo "--------------------------"
+    mpirun -np 8 ./spmv parallel "./matrices/${1}.mtx" "./results/${1}_8procs.csv"
+
+    echo ""
+    echo "--------------------------"
+    echo "-------16 processes-------"
+    echo "--------------------------"
+    mpirun -np 16 ./spmv parallel "./matrices/${1}.mtx" "./results/${1}_16procs.csv"
+
+    echo ""
+    echo "--------------------------"
+    echo "-------24 processes-------"
+    echo "--------------------------"
+    mpirun -np 24 ./spmv parallel "./matrices/${1}.mtx" "./results/${1}_24procs.csv"
+
+    echo ""
+    echo "--------------------------"
+    echo "-------32 processes-------"
+    echo "--------------------------"
+    mpirun -np 32 ./spmv parallel "./matrices/${1}.mtx" "./results/${1}_32procs.csv"
+
+    echo ""
+    echo "--------------------------"
+    echo "-------64 processes-------"
+    echo "--------------------------"
+    mpirun -np 64 ./spmv parallel "./matrices/${1}.mtx" "./results/${1}_64procs.csv"
+
+    echo ""
+    echo "--------------------------"
+    echo "-------96 processes-------"
+    echo "--------------------------"
+    mpirun -np 96 ./spmv parallel "./matrices/${1}.mtx" "./results/${1}_96procs.csv"
+
+    echo ""
+    echo "--------------------------"
+    echo "-------128 processes------"
+    echo "--------------------------"
+    mpirun -np 128 ./spmv parallel "./matrices/${1}.mtx" "./results/${1}_128procs.csv"
+}
+
+module load gcc91
+module load mpich-3.2.1--gcc-9.1.0
+g++() {
+    g++-9.1.0 "$@"
+}
+mpicxx --version
+
+nodes=$(sort -u $PBS_NODEFILE) # contains nodes allocated to this job
+echo "The job has assigned nodes: $nodes"
+
+for node in $nodes; do
+    echo "Node: $node"
+    ssh $node "hostname"
+    ssh $node "lscpu"
+done
+
+cd "$PBS_O_WORKDIR" # go to the directory where qsub was run
+mpicxx -O3 -march=native -mtune=native -o ./spmv ./src/spmv.cpp ./src/matrix.cpp ./src/benchmark.cpp
+
+benchmark_single "mouse_gene"
+benchmark_single "vas_stokes_2M"
+benchmark_single "circuit5M"
+benchmark_single "kron_g500-logn17"
+benchmark_single "mawi_201512020000"
+benchmark_single "kron_g500-logn20"
