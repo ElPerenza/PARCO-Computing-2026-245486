@@ -71,6 +71,18 @@ template<typename T> std::unique_ptr<T[]> matrix_vector_multiplication(partial_c
     return std::unique_ptr<T[]>(result);
 }
 
+std::vector<int> generate_displacements(const int block_sizes[], size_t length) {
+    std::vector<int> displacements(length, 0);
+    for(size_t i = 1; i < displacements.size(); i++) {
+        displacements[i] = displacements[i - 1] + block_sizes[i - 1];
+    }
+    return displacements;
+}
+
+std::vector<int> generate_displacements(const std::vector<int>& block_sizes) {
+    return generate_displacements(block_sizes.data(), block_sizes.size());
+}
+
 template<typename T> void scatter_spmv_data(
         int rows_counts[], const T array_blocks[], const long row_indices_blocks[], 
         int values_counts[], const T values_blocks[], 
@@ -80,7 +92,7 @@ template<typename T> void scatter_spmv_data(
 
     int n_processes;
     MPI_Comm_size(communicator, &n_processes);
-    std::vector<int> displacements(n_processes, 0);
+    std::vector<int> displacements;
 
     // In order:
     // 1. Scatter number of rows assigned to each process
@@ -90,9 +102,7 @@ template<typename T> void scatter_spmv_data(
     // 5. Scatter blocks of values assigned to each process
     
     if(rows_counts != nullptr) {
-        for(int i = 1; i < n_processes; i++) {
-            displacements[i] = displacements[i - 1] + rows_counts[i - 1];
-        }
+        displacements = generate_displacements(rows_counts, n_processes);
     }
     int n_rows;
     MPI_Scatter(rows_counts, 1, MPI_INT, &n_rows, 1, MPI_INT, root_rank, communicator);
@@ -105,17 +115,13 @@ template<typename T> void scatter_spmv_data(
         for(int i = 0; i < n_processes; i++) {
             rows_counts[i]++;
         }
-        for(int i = 1; i < n_processes; i++) {
-            displacements[i] = displacements[i - 1] + rows_counts[i - 1];
-        }
+        displacements = generate_displacements(rows_counts, n_processes);
     }
     std::unique_ptr<long[]> row_indices_ptr(new long[n_rows + 1]);
     MPI_Scatterv(row_indices_blocks, rows_counts, displacements.data(), MPI_LONG, row_indices_ptr.get(), n_rows + 1, MPI_LONG, root_rank, communicator);
     
     if(values_counts != nullptr) {
-        for(int i = 1; i < n_processes; i++) {
-            displacements[i] = displacements[i - 1] + values_counts[i - 1];
-        }
+        displacements = generate_displacements(values_counts, n_processes);
     }
     int n_values;
     MPI_Scatter(values_counts, 1, MPI_INT, &n_values, 1, MPI_INT, root_rank, communicator);
@@ -218,7 +224,6 @@ int main(int argc, char* argv[]) {
     std::getline(file, header);
     matrix_metadata metadata = identify_matrix(header);
 
-
     switch(metadata.field_values) {
         case field_type::integer: {
 
@@ -257,10 +262,7 @@ int main(int argc, char* argv[]) {
                         std::unique_ptr<long[]> result = matrix_vector_multiplication(root_rank_matrix, root_rank_array);
 
                         std::unique_ptr<long[]> result_blocks(new long[m.n_rows]);
-                        std::vector<int> displacements(n_processes, 0);
-                        for(int i = 1; i < n_processes; i++) {
-                            displacements[i] = displacements[i - 1] + rows_per_process[i - 1];
-                        }
+                        std::vector<int> displacements = generate_displacements(rows_per_process);
 
                         MPI_Gatherv(result.get(), root_rank_array.size(), MPI_LONG, result_blocks.get(), rows_per_process.data(), displacements.data(), MPI_LONG, ROOT_RANK, MPI_COMM_WORLD);
 
@@ -351,10 +353,7 @@ int main(int argc, char* argv[]) {
                         std::unique_ptr<double[]> result = matrix_vector_multiplication(root_rank_matrix, root_rank_array);
 
                         std::unique_ptr<double[]> result_blocks(new double[m.n_rows]);
-                        std::vector<int> displacements(n_processes, 0);
-                        for(int i = 1; i < n_processes; i++) {
-                            displacements[i] = displacements[i - 1] + rows_per_process[i - 1];
-                        }
+                        std::vector<int> displacements = generate_displacements(rows_per_process);
 
                         MPI_Gatherv(result.get(), root_rank_array.size(), MPI_DOUBLE, result_blocks.get(), rows_per_process.data(), displacements.data(), MPI_DOUBLE, ROOT_RANK, MPI_COMM_WORLD);
 
