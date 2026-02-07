@@ -166,7 +166,12 @@ template<typename T> csr_matrix<T> generate_matrix(long rows, double sparsity, s
         map_matrix[std::pair(row, column)] = value_generator();
     }
 
-    return map_to_csr_matrix(map_matrix);
+    csr_matrix<T> sparse_matrix = map_to_csr_matrix(map_matrix);
+    size_t total_elements = (rows * rows);
+    sparse_matrix.n_rows = rows;
+    sparse_matrix.n_columns = rows;
+    sparse_matrix.sparsity = (total_elements - sparse_matrix.values.size()) / ((double) total_elements) * 100;
+    return sparse_matrix;
 }
 
 /*********************/
