@@ -2,6 +2,7 @@
 #include <functional>
 #include <iostream>
 #include <map>
+#include <random>
 #include <string>
 #include <stdexcept>
 #include <utility>
@@ -139,6 +140,35 @@ template<typename T> csr_matrix<T> read_coordinate_matrix(std::istream& mtx_file
     return sparse_matrix;
 }
 
+/// @brief Generate a square matrix of the given size and sparsity
+/// @tparam T the type of values contained by the matrix
+/// @param rows the number of the matrix's rows and columns
+/// @param sparsity the sparsity (0.0 = all cells have a NNZ value, 1.0 = all cells are 0)
+/// @param value_generator function to generate a cell value of type `T`
+/// @return the generated matrix
+template<typename T> csr_matrix<T> generate_matrix(long rows, double sparsity, std::function<T ()> value_generator) {
+
+    std::random_device seed;
+    std::mt19937 generator(seed());
+    std::uniform_int_distribution<long> distribution(0, rows);
+    
+    std::map<std::pair<long, long>, T> map_matrix;
+
+    long n_values = (rows * rows) * (1 - sparsity); // number of values to insert -> total cells * density
+    for(int i = 0; i < n_values; i++) {
+        
+        long row, column;
+        do {
+            row = distribution(generator);
+            column = distribution(generator);
+        } while(map_matrix.count(std::pair(row, column)) != 0); // do not overwrite previously added values
+
+        map_matrix[std::pair(row, column)] = value_generator();
+    }
+
+    return map_to_csr_matrix(map_matrix);
+}
+
 /*********************/
 /***  Public API  ****/
 /*********************/
@@ -194,4 +224,20 @@ csr_matrix<long> read_integer_matrix(std::istream& mtx_file, matrix_metadata met
 csr_matrix<double> read_real_matrix(std::istream& mtx_file, matrix_metadata metadata) {
     std::function<double (std::string)> extractor = [](std::string s) { return std::stod(s); };
     return read_coordinate_matrix(mtx_file, metadata.symmetry, extractor);
+}
+
+csr_matrix<long> generate_integer_matrix(long rows, double sparsity) {
+    std::random_device seed;
+    std::mt19937 generator(seed());
+    std::uniform_int_distribution<long> distribution(-100, 100);
+    std::function<long ()> long_generator = [&generator, &distribution]() { return distribution(generator); };
+    return generate_matrix<long>(rows, sparsity, generator);
+}
+
+csr_matrix<double> generate_real_matrix(long rows, double sparsity) {
+    std::random_device seed;
+    std::mt19937 generator(seed());
+    std::uniform_real_distribution<double> distribution(-1.0, 1.0);
+    std::function<double ()> real_generator = [&generator, &distribution]() { return distribution(generator); };
+    return generate_matrix<double>(rows, sparsity, generator);
 }

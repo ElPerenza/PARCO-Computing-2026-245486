@@ -51,4 +51,18 @@ csr_matrix<long> read_integer_matrix(std::istream& mtx_file, matrix_metadata met
 /// @return the matrix in CSR format
 csr_matrix<double> read_real_matrix(std::istream& mtx_file, matrix_metadata metadata);
 
+/// @brief Generate a square integer valued matrix of the given size and sparsity
+/// @param rows the number of the matrix's rows and columns
+/// @param sparsity the sparsity (0.0 = all cells have a NNZ value, 1.0 = all cells are 0)
+/// @param value_generator function to generate an integer cell value
+/// @return the generated matrix
+csr_matrix<long> generate_integer_matrix(long rows, double sparsity);
+
+/// @brief Generate a square real valued matrix of the given size and sparsity
+/// @param rows the number of the matrix's rows and columns
+/// @param sparsity the sparsity (0.0 = all cells have a NNZ value, 1.0 = all cells are 0)
+/// @param value_generator function to generate a real cell value
+/// @return the generated matrix
+csr_matrix<double> generate_real_matrix(long rows, double sparsity);
+
 #endif
