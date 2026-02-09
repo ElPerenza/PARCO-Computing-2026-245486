@@ -33,8 +33,8 @@ Where the arguments are:
 ## Running on the cluster
 To run all benchmarks on the UniTN HPC cluster, the file `./scripts/benchmark_all.pbs` can be used with `qsub`. This file compiles the executable and then executes all sequential and parallel benchmarks for the 6 matrices found in `./matrices`, plus addional weak scaling benchmarks with generated matrices. Resources don't need to be specified as they're already inside the file.
 
-## Generating the plot
-To generate the plot found in the paper, use the file `./scripts/create_speedup_plot.py`. The only dependencies are Python `3.11` and matplotlib `3.10.7`, as specified in `./requirements.txt`. The syntax is:
+## Generating the plots
+To generate the plot found in the paper, use the files `./scripts/create_speedup_plot.py` ans `./scripts/create_weak_scaling_plot.py`. The only dependencies are Python `3.11` and matplotlib `3.10.7`, as specified in `./requirements.txt`. The syntax is the same for both files:
 ```
 python ./scripts/create_speedup_plot.py <results_path> <output_path>
 ```
