@@ -1,8 +1,8 @@
 #!/bin/bash
 
 #PBS -N benchmark_all
-#PBS -q short_cpuQ
-#PBS -l walltime=3:00:00
+#PBS -q shortCPUQ
+#PBS -l walltime=5:00:00
 #PBS -l select=2:ncpus=64:mem=64gb:mpiprocs=64
 
 benchmark_single() {
@@ -58,11 +58,61 @@ benchmark_single() {
     mpirun -np 128 ./spmv parallel "./matrices/${1}.mtx" "./results/${1}_128procs.csv"
 }
 
-module load gcc91
-module load mpich-3.2.1--gcc-9.1.0
-g++() {
-    g++-9.1.0 "$@"
+benchmark_generated() {
+
+    echo ""
+    echo Randomly generated matrices
+    echo ""
+    echo "--------------------------"
+    echo "--------sequential--------"
+    echo "--------------------------"
+    mpirun -np 1 ./spmv sequential generated "./results/generated_sequential.csv" 176776 0.9999
+
+    echo ""
+    echo "--------------------------"
+    echo "-------8 processes--------"
+    echo "--------------------------"
+    mpirun -np 8 ./spmv parallel generated "./results/generated_8procs.csv" 500000 0.9999
+
+    echo ""
+    echo "--------------------------"
+    echo "-------16 processes-------"
+    echo "--------------------------"
+    mpirun -np 16 ./spmv parallel generated "./results/generated_16procs.csv" 707106 0.9999
+
+    echo ""
+    echo "--------------------------"
+    echo "-------24 processes-------"
+    echo "--------------------------"
+    mpirun -np 24 ./spmv parallel generated "./results/generated_24procs.csv" 866025 0.9999
+
+    echo ""
+    echo "--------------------------"
+    echo "-------32 processes-------"
+    echo "--------------------------"
+    mpirun -np 32 ./spmv parallel generated "./results/generated_32procs.csv" 1000000 0.9999
+
+    echo ""
+    echo "--------------------------"
+    echo "-------64 processes-------"
+    echo "--------------------------"
+    mpirun -np 64 ./spmv parallel generated "./results/generated_64procs.csv" 1414213 0.9999
+
+    echo ""
+    echo "--------------------------"
+    echo "-------96 processes-------"
+    echo "--------------------------"
+    mpirun -np 96 ./spmv parallel generated "./results/generated_96procs.csv" 1732050 0.9999
+
+    echo ""
+    echo "--------------------------"
+    echo "-------128 processes------"
+    echo "--------------------------"
+    mpirun -np 128 ./spmv parallel generated "./results/generated_128procs.csv" 2000000 0.9999
 }
+
+module load GCC/13.2.0
+module load OpenMPI/4.1.6-GCC-13.2.0
 mpicxx --version
 
 nodes=$(sort -u $PBS_NODEFILE) # contains nodes allocated to this job
@@ -72,6 +122,7 @@ for node in $nodes; do
     echo "Node: $node"
     ssh $node "hostname"
     ssh $node "lscpu"
+    ssh $node "lshw -C network"
 done
 
 cd "$PBS_O_WORKDIR" # go to the directory where qsub was run
@@ -83,3 +134,4 @@ benchmark_single "circuit5M"
 benchmark_single "kron_g500-logn17"
 benchmark_single "mawi_201512020000"
 benchmark_single "kron_g500-logn20"
+benchmark_generated
