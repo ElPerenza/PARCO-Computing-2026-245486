@@ -161,9 +161,9 @@ template<typename T> csr_matrix<T> generate_matrix(long rows, double sparsity, s
         do {
             row = distribution(generator);
             column = distribution(generator);
-        } while(map_matrix.count(std::pair(row, column)) != 0); // do not overwrite previously added values
+        } while(map_matrix.count(std::pair<long, long>(row, column)) != 0); // do not overwrite previously added values
 
-        map_matrix[std::pair(row, column)] = value_generator();
+        map_matrix[std::pair<long, long>(row, column)] = value_generator();
     }
 
     csr_matrix<T> sparse_matrix = map_to_csr_matrix(map_matrix);
