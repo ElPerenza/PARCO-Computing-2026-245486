@@ -448,7 +448,7 @@ int main(int argc, char* argv[]) {
                         MPI_Barrier(MPI_COMM_WORLD);
 
                         MPI_Gatherv(result.get(), array.size(), MPI_LONG, nullptr, nullptr, nullptr, MPI_LONG, ROOT_RANK, MPI_COMM_WORLD);
-                        MPI_Gather(&iops, 1, MPI_INT, nullptr, -1, MPI_INT, ROOT_RANK, MPI_COMM_WORLD);
+                        MPI_Reduce(&iops, nullptr, 1, MPI_INT, MPI_SUM, ROOT_RANK, MPI_COMM_WORLD);
 
                         MPI_Barrier(MPI_COMM_WORLD);
                         return std::make_tuple(-1, -1, -1);
