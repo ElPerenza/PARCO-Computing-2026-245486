@@ -1,3 +1,4 @@
+#include <chrono>
 #include <iomanip>
 #include <iostream>
 #include <fstream>
@@ -6,6 +7,7 @@
 #include <random>
 #include <string>
 #include <stdexcept>
+#include <tuple>
 #include <vector>
 
 #include "benchmark.hpp"
@@ -53,8 +55,9 @@ std::vector<double> generate_real_array(size_t size) {
 /// @tparam T the field type of the matrix and vector 
 /// @param matrix the matrix to multiply
 /// @param array the vector to multiply
+/// @param flops
 /// @return the result of the multiplication
-template<typename T> std::unique_ptr<T[]> matrix_vector_multiplication(partial_csr_matrix<T>& matrix, std::vector<T>& array) {
+template<typename T> std::unique_ptr<T[]> matrix_vector_multiplication(partial_csr_matrix<T>& matrix, std::vector<T>& array, int& flops) {
 
     alignas(CACHE_LINE_SIZE) T* result = new T[array.size()];
 
@@ -64,6 +67,7 @@ template<typename T> std::unique_ptr<T[]> matrix_vector_multiplication(partial_c
         long accumulator = 0;
         for(long value_index = row_start; value_index < row_end; value_index++) {
             accumulator += (matrix.values[value_index] * array[i]);
+            flops++;
         }
         result[i] = accumulator;
     }
@@ -176,14 +180,42 @@ template<typename T> void distribute_data_to_processes(
     scatter_spmv_data<T>(rows_per_process.data(), partitioned_array.data(), partitioned_matrix.row_indices.data(), values_per_process.data(), partitioned_matrix.values.data(), datatype, my_rank, communicator, distributed_array, distributed_matrix);
 }
 
+template<typename T> std::unique_ptr<T[]> reorder_results(const T result_blocks[], const std::vector<int>& rows_per_process, long n_rows) {
+    
+    std::unique_ptr<T[]> final_result(new T[n_rows]);
+    int start_index = 0;
+    size_t n_processes = rows_per_process.size();
+    for(long process_rank = 0; process_rank < n_processes; process_rank++) {
+
+        for(int j = start_index; j < start_index + rows_per_process[process_rank]; j++) {
+            int local_index = j - start_index;
+            final_result[(local_index * n_processes) + process_rank] = result_blocks[j];
+        }
+
+        start_index += rows_per_process[process_rank];
+    }
+
+    return final_result;
+}
+
 void print_results(benchmark_results results) {
     std::cout << "RESULTS:\n";
-    std::cout << "Fastest: " << results.fastest_time << "ms\n";
-    std::cout << "Slowest: " << results.slowest_time << "ms\n";
-    std::cout << "Average: " << results.average_time << "ms\n";
-    std::cout << "90th percentile: " << results.ninetieth_percentile_time << "ms\n";
-    std::cout << "Run times: ";
-    for(long v : results.times) {
+    std::cout << "Fastest: " << results.computation_time.fastest << "ms\n";
+    std::cout << "Slowest: " << results.computation_time.slowest << "ms\n";
+    std::cout << "Average: " << results.computation_time.average << "ms\n";
+    std::cout << "90th percentile: " << results.computation_time.ninetieth_percentile << "ms\n";
+    std::cout << "Computation times: ";
+    for(double v : results.computation_time.times) {
+        std::cout << v << "ms, ";
+    }
+    std::cout << "\n";
+    std::cout << "FLOPS: ";
+    for(double v : results.flops) {
+        std::cout << v << ", ";
+    }
+    std::cout << "\n";
+    std::cout << "Communication times: ";
+    for(double v : results.communication_time.times) {
         std::cout << v << "ms, ";
     }
     std::cout << "\n";
@@ -191,16 +223,28 @@ void print_results(benchmark_results results) {
 
 void write_results_to_file(std::string filename, benchmark_results results) {
     std::ofstream output(filename);
-    output << "fastest,slowest,ninetieth\n";
-    output << results.fastest_time << "," << results.slowest_time << "," << results.ninetieth_percentile_time << "\n";
+    output << "comp_fastest,comp_slowest,comp_average,comp_ninetieth,comm_fastest,comm_slowest,comm_average,comm_ninetieth,flops_average\n";
+    output << results.computation_time.fastest << "," << results.computation_time.slowest << "," << results.computation_time.average << "," << results.computation_time.ninetieth_percentile << ",";
+    output << results.communication_time.fastest << "," << results.communication_time.slowest << "," << results.communication_time.average << "," << results.communication_time.ninetieth_percentile << ",";
+    output << results.flops_average << "\n";
     output.flush();
     output.close();
 }
 
+void print_usage(std::string program_name) {
+    std::cout << "USAGE: " << program_name << " [sequential | parallel] [<matrix-path> | generated] <results-output-path> <num-rows> <sparsity>\n";
+    std::cout << "Note: <num-rows> and <sparsity> must only be provided if the second parameter is \"generated\"\n";
+}
+
 int main(int argc, char* argv[]) {
 
-    if(argc != 4) {
-        std::cout << "USAGE: " << argv[0] << " [sequential | parallel] <matrix-path> <results-output-path>\n";
+    if(argc != 4 && argc != 6) {
+        print_usage(argv[0]);
+        return 0;
+    }
+    std::string matrix_path(argv[2]);
+    if(matrix_path == "generated" && argc != 6) {
+        print_usage(argv[0]);
         return 0;
     }
     std::string execution_mode(argv[1]);
@@ -208,6 +252,8 @@ int main(int argc, char* argv[]) {
         std::cout << "Invalid execution mode (must be 'sequential' or 'parallel'): " << execution_mode << "\n";
         return -1;
     }
+    std::string results_path(argv[3]);
+
     if(MPI_Init(&argc, &argv) != MPI_SUCCESS) {
         std::cerr << "Failed to initialize MPI!\n";
         return 1;
@@ -217,191 +263,297 @@ int main(int argc, char* argv[]) {
     MPI_Comm_size(MPI_COMM_WORLD, &n_processes);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    std::string matrix_path(argv[2]);
-    std::string results_path(argv[3]);
-    std::ifstream file(matrix_path);
-    std::string header;
-    std::getline(file, header);
-    matrix_metadata metadata = identify_matrix(header);
+    if(matrix_path == "generated") {
 
-    switch(metadata.field_values) {
-        case field_type::integer: {
+        if(rank == ROOT_RANK) {
 
-            if(rank == ROOT_RANK) {
+            std::cout << "Generating matrix...\n";
+            csr_matrix<double> m = generate_real_matrix(std::stol(argv[4]), std::stod(argv[5]));
+            std::cout << "Matrix sparsity: " << std::setprecision(10) << m.sparsity << "%\n";
 
-                std::cout << "Loading matrix...\n";
-                csr_matrix<long> m = read_integer_matrix(file, metadata);
-                std::cout << "Matrix sparsity: " << std::setprecision(10) << m.sparsity << "%\n";
+            std::cout << "Generating vector...\n";
+            std::vector<double> test_arr = generate_real_array(m.n_rows);
 
-                std::cout << "Generating vector...\n";
-                std::vector<long> test_arr = generate_integer_array(m.n_rows);
+            std::function<std::tuple<double, double, int> ()> benchmark_function;
 
-                // This is the part that needs to be parallelized with MPI.
-                // Worker processes are assigned rows based on their rank -> rank == row_index % num_processes.
-                // How to get the matrix to the worker processes?
-                // - option 1: the whole matrix is broadcasted to the collective, each process only calculates on its assigned rows. Big network bottleneck if matrix is large/has many NNZ values.
-                // - option 2: the matrix is split into sections by the master and each worker receives only the section it will work on. Matrix splitting is done sequentially and not in parallel, need to send data to each worker which might still have a big network bottleneck.
-                // The benchmark funcition logic needs to be modified to properly accumulate the result of all worker processes. We don't necessarily care about the output as long as the computation is correct, but the accumulation needs to be counted in the benchmarking time.
-                std::function<void ()> benchmark_function;
+            if(execution_mode == "sequential") {
 
-                if(execution_mode == "sequential") {
+                benchmark_function = [&m, &test_arr]() {
+                    auto start = std::chrono::high_resolution_clock::now();
 
-                    benchmark_function = [&m, &test_arr]() { 
-                        matrix_vector_multiplication(m, test_arr);
-                    };
-                    
-                } else if(execution_mode == "parallel") {
+                    int flops = 0;
+                    matrix_vector_multiplication(m, test_arr, flops);
 
-                    benchmark_function = [&m, &test_arr, &n_processes, &rank]() { 
+                    auto end = std::chrono::high_resolution_clock::now();
+                    const std::chrono::duration<double, std::milli> duration = end - start;
+                    return std::make_tuple(0, duration.count(), flops);
+                };
+                
+            } else if(execution_mode == "parallel") {
 
-                        partial_csr_matrix<long> root_rank_matrix;
-                        std::vector<long> root_rank_array;
-                        std::vector<int> rows_per_process;
-                        distribute_data_to_processes<long>(m, test_arr, MPI_LONG, MPI_COMM_WORLD, root_rank_matrix, root_rank_array, rows_per_process);
+                benchmark_function = [&m, &test_arr, &n_processes, &rank]() {
+                    auto start = std::chrono::high_resolution_clock::now();
 
-                        std::unique_ptr<long[]> result = matrix_vector_multiplication(root_rank_matrix, root_rank_array);
+                    partial_csr_matrix<double> root_rank_matrix;
+                    std::vector<double> root_rank_array;
+                    std::vector<int> rows_per_process;
+                    distribute_data_to_processes<double>(m, test_arr, MPI_DOUBLE, MPI_COMM_WORLD, root_rank_matrix, root_rank_array, rows_per_process);
 
-                        std::unique_ptr<long[]> result_blocks(new long[m.n_rows]);
-                        std::vector<int> displacements = generate_displacements(rows_per_process);
+                    int flops = 0, total_flops = 0;
+                    // Barriers needed to make sure the computation is timed properly
+                    MPI_Barrier(MPI_COMM_WORLD);
+                    auto computation_start = std::chrono::high_resolution_clock::now();
+                    std::unique_ptr<double[]> result = matrix_vector_multiplication(root_rank_matrix, root_rank_array, flops);
+                    MPI_Barrier(MPI_COMM_WORLD);
+                    auto computation_end = std::chrono::high_resolution_clock::now();
 
-                        MPI_Gatherv(result.get(), root_rank_array.size(), MPI_LONG, result_blocks.get(), rows_per_process.data(), displacements.data(), MPI_LONG, ROOT_RANK, MPI_COMM_WORLD);
+                    std::unique_ptr<double[]> result_blocks(new double[m.n_rows]);
+                    std::vector<int> displacements = generate_displacements(rows_per_process);
+                    MPI_Gatherv(result.get(), root_rank_array.size(), MPI_DOUBLE, result_blocks.get(), rows_per_process.data(), displacements.data(), MPI_DOUBLE, ROOT_RANK, MPI_COMM_WORLD);
+                    MPI_Reduce(&flops, &total_flops, 1, MPI_INT, MPI_SUM, ROOT_RANK, MPI_COMM_WORLD);
 
-                        std::unique_ptr<long[]> final_result(new long[m.n_rows]);
-                        
-                        int start_index = 0;
-                        for(long process_rank = 0; process_rank < n_processes; process_rank++) {
-
-                            for(int j = start_index; j < start_index + rows_per_process[process_rank]; j++) {
-                                int local_index = j - start_index;
-                                final_result[(local_index * n_processes) + process_rank] = result_blocks[j];
-                            }
-
-                            start_index += rows_per_process[process_rank];
-                        }
-
-                        MPI_Barrier(MPI_COMM_WORLD);
-                    };
-
-                }
-
-                std::cout << "Starting benchmark...\n";
-                benchmark_results results = benchmark(benchmark_function, BENCHMARK_RUNS, BENCHMARK_WARMUP);
-                print_results(results);
-                write_results_to_file(results_path, results);
-
-            } else {
-
-                if(execution_mode == "sequential") {
-                    MPI_Finalize();
-                    return 0;
-                }
-
-                std::function<void ()> fn = [&rank, &n_processes]() {
-
-                    partial_csr_matrix<long> matrix;
-                    std::vector<long> array;
-                    scatter_spmv_data<long>(nullptr, nullptr, nullptr, nullptr, nullptr, MPI_LONG, ROOT_RANK, MPI_COMM_WORLD, array, matrix);
-
-                    std::unique_ptr<long[]> result = matrix_vector_multiplication(matrix, array);
-
-                    MPI_Gatherv(result.get(), array.size(), MPI_LONG, nullptr, nullptr, nullptr, MPI_LONG, ROOT_RANK, MPI_COMM_WORLD);
+                    reorder_results(result_blocks.get(), rows_per_process, m.n_rows);
 
                     MPI_Barrier(MPI_COMM_WORLD);
+                    auto end = std::chrono::high_resolution_clock::now();
+                    const std::chrono::duration<double, std::milli> computation_duration = computation_end - computation_start;
+                    const std::chrono::duration<double, std::milli> total_duration = end - start;
+                    return std::make_tuple((total_duration - computation_duration).count(), computation_duration.count(), total_flops);
                 };
-
-                benchmark(fn, BENCHMARK_RUNS, BENCHMARK_WARMUP);
 
             }
-            
-            break;
+
+            std::cout << "Starting benchmark...\n";
+            benchmark_results results = benchmark(benchmark_function, BENCHMARK_RUNS, BENCHMARK_WARMUP);
+            print_results(results);
+            write_results_to_file(results_path, results);
+
+        } else {
+
+            if(execution_mode == "sequential") {
+                MPI_Finalize();
+                return 0;
+            }
+
+            std::function<std::tuple<double, double, int> ()> fn = [&rank, &n_processes]() {
+
+                partial_csr_matrix<double> matrix;
+                std::vector<double> array;
+                scatter_spmv_data<double>(nullptr, nullptr, nullptr, nullptr, nullptr, MPI_LONG, ROOT_RANK, MPI_COMM_WORLD, array, matrix);
+
+                int flops = 0;
+                MPI_Barrier(MPI_COMM_WORLD);
+                std::unique_ptr<double[]> result = matrix_vector_multiplication(matrix, array, flops);
+                MPI_Barrier(MPI_COMM_WORLD);
+
+                MPI_Gatherv(result.get(), array.size(), MPI_DOUBLE, nullptr, nullptr, nullptr, MPI_DOUBLE, ROOT_RANK, MPI_COMM_WORLD);
+                MPI_Reduce(&flops, nullptr, 1, MPI_INT, MPI_SUM, ROOT_RANK, MPI_COMM_WORLD);
+
+                MPI_Barrier(MPI_COMM_WORLD);
+                return std::make_tuple(-1, -1, -1);
+            };
+
+            benchmark(fn, BENCHMARK_RUNS, BENCHMARK_WARMUP);
+
         }
 
-        case field_type::real: {
+    } else {
 
-            if(rank == ROOT_RANK) {
+        std::ifstream file(matrix_path);
+        std::string header;
+        std::getline(file, header);
+        matrix_metadata metadata = identify_matrix(header);
 
-                std::cout << "Loading matrix...\n";
-                csr_matrix<double> m = read_real_matrix(file, metadata);
-                std::cout << "Matrix sparsity: " << std::setprecision(10) << m.sparsity << "%\n";
+        switch(metadata.field_values) {
+            case field_type::integer: {
 
-                std::cout << "Generating vector...\n";
-                std::vector<double> test_arr = generate_real_array(m.n_rows);
+                if(rank == ROOT_RANK) {
 
-                // This is the part that needs to be parallelized with MPI.
-                // Worker processes are assigned rows based on their rank -> rank == row_index % num_processes.
-                // How to get the matrix to the worker processes?
-                // - option 1: the whole matrix is broadcasted to the collective, each process only calculates on its assigned rows. Big network bottleneck if matrix is large/has many NNZ values.
-                // - option 2: the matrix is split into sections by the master and each worker receives only the section it will work on. Matrix splitting is done sequentially and not in parallel, need to send data to each worker which might still have a big network bottleneck.
-                // The benchmark funcition logic needs to be modified to properly accumulate the result of all worker processes. We don't necessarily care about the output as long as the computation is correct, but the accumulation needs to be counted in the benchmarking time.
-                std::function<void ()> benchmark_function;
+                    std::cout << "Loading matrix...\n";
+                    csr_matrix<long> m = read_integer_matrix(file, metadata);
+                    std::cout << "Matrix sparsity: " << std::setprecision(10) << m.sparsity << "%\n";
 
-                if(execution_mode == "sequential") {
+                    std::cout << "Generating vector...\n";
+                    std::vector<long> test_arr = generate_integer_array(m.n_rows);
 
-                    benchmark_function = [&m, &test_arr]() { 
-                        matrix_vector_multiplication(m, test_arr);
-                    };
-                    
-                } else if(execution_mode == "parallel") {
+                    std::function<std::tuple<double, double, int> ()> benchmark_function;
 
-                    benchmark_function = [&m, &test_arr, &n_processes, &rank]() { 
+                    if(execution_mode == "sequential") {
 
-                        partial_csr_matrix<double> root_rank_matrix;
-                        std::vector<double> root_rank_array;
-                        std::vector<int> rows_per_process;
-                        distribute_data_to_processes<double>(m, test_arr, MPI_DOUBLE, MPI_COMM_WORLD, root_rank_matrix, root_rank_array, rows_per_process);
+                        benchmark_function = [&m, &test_arr]() {
+                            auto start = std::chrono::high_resolution_clock::now();
 
-                        std::unique_ptr<double[]> result = matrix_vector_multiplication(root_rank_matrix, root_rank_array);
+                            int iops = 0;
+                            matrix_vector_multiplication(m, test_arr, iops);
 
-                        std::unique_ptr<double[]> result_blocks(new double[m.n_rows]);
-                        std::vector<int> displacements = generate_displacements(rows_per_process);
-
-                        MPI_Gatherv(result.get(), root_rank_array.size(), MPI_DOUBLE, result_blocks.get(), rows_per_process.data(), displacements.data(), MPI_DOUBLE, ROOT_RANK, MPI_COMM_WORLD);
-
-                        std::unique_ptr<double[]> final_result(new double[m.n_rows]);
+                            auto end = std::chrono::high_resolution_clock::now();
+                            const std::chrono::duration<double, std::milli> duration = end - start;
+                            return std::make_tuple(0, duration.count(), iops);
+                        };
                         
-                        int start_index = 0;
-                        for(long process_rank = 0; process_rank < n_processes; process_rank++) {
+                    } else if(execution_mode == "parallel") {
 
-                            for(int j = start_index; j < start_index + rows_per_process[process_rank]; j++) {
-                                int local_index = j - start_index;
-                                final_result[(local_index * n_processes) + process_rank] = result_blocks[j];
-                            }
+                        benchmark_function = [&m, &test_arr, &n_processes, &rank]() { 
+                            auto start = std::chrono::high_resolution_clock::now();
 
-                            start_index += rows_per_process[process_rank];
-                        }
+                            partial_csr_matrix<long> root_rank_matrix;
+                            std::vector<long> root_rank_array;
+                            std::vector<int> rows_per_process;
+                            distribute_data_to_processes<long>(m, test_arr, MPI_LONG, MPI_COMM_WORLD, root_rank_matrix, root_rank_array, rows_per_process);
+
+                            int iops = 0, total_iops = 0;
+                            MPI_Barrier(MPI_COMM_WORLD);
+                            auto computation_start = std::chrono::high_resolution_clock::now();
+                            std::unique_ptr<long[]> result = matrix_vector_multiplication(root_rank_matrix, root_rank_array, iops);
+                            MPI_Barrier(MPI_COMM_WORLD);
+                            auto computation_end = std::chrono::high_resolution_clock::now();
+
+                            std::unique_ptr<long[]> result_blocks(new long[m.n_rows]);
+                            std::vector<int> displacements = generate_displacements(rows_per_process);
+                            MPI_Gatherv(result.get(), root_rank_array.size(), MPI_LONG, result_blocks.get(), rows_per_process.data(), displacements.data(), MPI_LONG, ROOT_RANK, MPI_COMM_WORLD);
+                            MPI_Reduce(&iops, &total_iops, 1, MPI_INT, MPI_SUM, ROOT_RANK, MPI_COMM_WORLD);
+
+                            reorder_results(result_blocks.get(), rows_per_process, m.n_rows);
+
+                            MPI_Barrier(MPI_COMM_WORLD);
+                            auto end = std::chrono::high_resolution_clock::now();
+                            const std::chrono::duration<double, std::milli> computation_duration = computation_end - computation_start;
+                            const std::chrono::duration<double, std::milli> total_duration = end - start;
+                            return std::make_tuple((total_duration - computation_duration).count(), computation_duration.count(), total_iops);
+                        };
+
+                    }
+
+                    std::cout << "Starting benchmark...\n";
+                    benchmark_results results = benchmark(benchmark_function, BENCHMARK_RUNS, BENCHMARK_WARMUP);
+                    print_results(results);
+                    write_results_to_file(results_path, results);
+
+                } else {
+
+                    if(execution_mode == "sequential") {
+                        MPI_Finalize();
+                        return 0;
+                    }
+
+                    std::function<std::tuple<double, double, int> ()> fn = [&rank, &n_processes]() {
+
+                        partial_csr_matrix<long> matrix;
+                        std::vector<long> array;
+                        scatter_spmv_data<long>(nullptr, nullptr, nullptr, nullptr, nullptr, MPI_LONG, ROOT_RANK, MPI_COMM_WORLD, array, matrix);
+
+                        int iops = 0;
+                        MPI_Barrier(MPI_COMM_WORLD);
+                        std::unique_ptr<long[]> result = matrix_vector_multiplication(matrix, array, iops);
+                        MPI_Barrier(MPI_COMM_WORLD);
+
+                        MPI_Gatherv(result.get(), array.size(), MPI_LONG, nullptr, nullptr, nullptr, MPI_LONG, ROOT_RANK, MPI_COMM_WORLD);
+                        MPI_Gather(&iops, 1, MPI_INT, nullptr, -1, MPI_INT, ROOT_RANK, MPI_COMM_WORLD);
 
                         MPI_Barrier(MPI_COMM_WORLD);
+                        return std::make_tuple(-1, -1, -1);
                     };
 
+                    benchmark(fn, BENCHMARK_RUNS, BENCHMARK_WARMUP);
+
                 }
+                
+                break;
+            }
 
-                std::cout << "Starting benchmark...\n";
-                benchmark_results results = benchmark(benchmark_function, BENCHMARK_RUNS, BENCHMARK_WARMUP);
-                print_results(results);
-                write_results_to_file(results_path, results);
+            case field_type::real: {
 
-            } else {
+                if(rank == ROOT_RANK) {
 
-                if(execution_mode == "sequential") {
-                    MPI_Finalize();
-                    return 0;
+                    std::cout << "Loading matrix...\n";
+                    csr_matrix<double> m = read_real_matrix(file, metadata);
+                    std::cout << "Matrix sparsity: " << std::setprecision(10) << m.sparsity << "%\n";
+
+                    std::cout << "Generating vector...\n";
+                    std::vector<double> test_arr = generate_real_array(m.n_rows);
+
+                    std::function<std::tuple<double, double, int> ()> benchmark_function;
+
+                    if(execution_mode == "sequential") {
+
+                        benchmark_function = [&m, &test_arr]() {
+                            auto start = std::chrono::high_resolution_clock::now();
+
+                            int flops = 0;
+                            matrix_vector_multiplication(m, test_arr, flops);
+
+                            auto end = std::chrono::high_resolution_clock::now();
+                            const std::chrono::duration<double, std::milli> duration = end - start;
+                            return std::make_tuple(0, duration.count(), flops);
+                        };
+                        
+                    } else if(execution_mode == "parallel") {
+
+                        benchmark_function = [&m, &test_arr, &n_processes, &rank]() {
+                            auto start = std::chrono::high_resolution_clock::now();
+
+                            partial_csr_matrix<double> root_rank_matrix;
+                            std::vector<double> root_rank_array;
+                            std::vector<int> rows_per_process;
+                            distribute_data_to_processes<double>(m, test_arr, MPI_DOUBLE, MPI_COMM_WORLD, root_rank_matrix, root_rank_array, rows_per_process);
+
+                            int flops = 0, total_flops = 0;
+                            // Barriers needed to make sure the computation is timed properly
+                            MPI_Barrier(MPI_COMM_WORLD);
+                            auto computation_start = std::chrono::high_resolution_clock::now();
+                            std::unique_ptr<double[]> result = matrix_vector_multiplication(root_rank_matrix, root_rank_array, flops);
+                            MPI_Barrier(MPI_COMM_WORLD);
+                            auto computation_end = std::chrono::high_resolution_clock::now();
+
+                            std::unique_ptr<double[]> result_blocks(new double[m.n_rows]);
+                            std::vector<int> displacements = generate_displacements(rows_per_process);
+                            MPI_Gatherv(result.get(), root_rank_array.size(), MPI_DOUBLE, result_blocks.get(), rows_per_process.data(), displacements.data(), MPI_DOUBLE, ROOT_RANK, MPI_COMM_WORLD);
+                            MPI_Reduce(&flops, &total_flops, 1, MPI_INT, MPI_SUM, ROOT_RANK, MPI_COMM_WORLD);
+
+                            reorder_results(result_blocks.get(), rows_per_process, m.n_rows);
+
+                            MPI_Barrier(MPI_COMM_WORLD);
+                            auto end = std::chrono::high_resolution_clock::now();
+                            const std::chrono::duration<double, std::milli> computation_duration = computation_end - computation_start;
+                            const std::chrono::duration<double, std::milli> total_duration = end - start;
+                            return std::make_tuple((total_duration - computation_duration).count(), computation_duration.count(), total_flops);
+                        };
+
+                    }
+
+                    std::cout << "Starting benchmark...\n";
+                    benchmark_results results = benchmark(benchmark_function, BENCHMARK_RUNS, BENCHMARK_WARMUP);
+                    print_results(results);
+                    write_results_to_file(results_path, results);
+
+                } else {
+
+                    if(execution_mode == "sequential") {
+                        MPI_Finalize();
+                        return 0;
+                    }
+
+                    std::function<std::tuple<double, double, int> ()> fn = [&rank, &n_processes]() {
+
+                        partial_csr_matrix<double> matrix;
+                        std::vector<double> array;
+                        scatter_spmv_data<double>(nullptr, nullptr, nullptr, nullptr, nullptr, MPI_LONG, ROOT_RANK, MPI_COMM_WORLD, array, matrix);
+
+                        int flops = 0;
+                        MPI_Barrier(MPI_COMM_WORLD);
+                        std::unique_ptr<double[]> result = matrix_vector_multiplication(matrix, array, flops);
+                        MPI_Barrier(MPI_COMM_WORLD);
+
+                        MPI_Gatherv(result.get(), array.size(), MPI_DOUBLE, nullptr, nullptr, nullptr, MPI_DOUBLE, ROOT_RANK, MPI_COMM_WORLD);
+                        MPI_Reduce(&flops, nullptr, 1, MPI_INT, MPI_SUM, ROOT_RANK, MPI_COMM_WORLD);
+
+                        MPI_Barrier(MPI_COMM_WORLD);
+                        return std::make_tuple(-1, -1, -1);
+                    };
+
+                    benchmark(fn, BENCHMARK_RUNS, BENCHMARK_WARMUP);
+
                 }
-
-                std::function<void ()> fn = [&rank, &n_processes]() {
-
-                    partial_csr_matrix<double> matrix;
-                    std::vector<double> array;
-                    scatter_spmv_data<double>(nullptr, nullptr, nullptr, nullptr, nullptr, MPI_LONG, ROOT_RANK, MPI_COMM_WORLD, array, matrix);
-
-                    std::unique_ptr<double[]> result = matrix_vector_multiplication(matrix, array);
-
-                    MPI_Gatherv(result.get(), array.size(), MPI_DOUBLE, nullptr, nullptr, nullptr, MPI_DOUBLE, ROOT_RANK, MPI_COMM_WORLD);
-
-                    MPI_Barrier(MPI_COMM_WORLD);
-                };
-
-                benchmark(fn, BENCHMARK_RUNS, BENCHMARK_WARMUP);
-
             }
         }
     }
